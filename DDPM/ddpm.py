@@ -1,3 +1,4 @@
+from abc import abstractclassmethod, abstractmethod
 import torch
 import torch.nn as nn
 import math
@@ -12,7 +13,7 @@ def time_embedding(timesteps, emb_dim):
     '''
     timesteps = timesteps.reshape(-1, 1)
     num_emb_pairs = emb_dim // 2
-    log_denoms = 2*torch.arange(0, num_emb_pairs)/emb_dim*math.log(torch.tensor(10000))  # Should be (emb_dim//2,)
+    log_denoms = 2*torch.arange(0, num_emb_pairs, device=timesteps.device)/emb_dim*math.log(torch.tensor(10000))  # Should be (emb_dim//2,)
     angles = timesteps @ (1/torch.exp(log_denoms.reshape(1, -1)))  # Should be (n, emb_dim//2)
     sines = torch.sin(angles)
     cosines = torch.cos(angles)
@@ -20,10 +21,37 @@ def time_embedding(timesteps, emb_dim):
 
     return embeddings
 
+## NOTE: Implemented this third
+## We are going to define a TimestepBlock class so that we can run isinstance() with classes that take in time_emb and not just x
+## Then, we'll implement TimestepEmbedSequential which inherits from Sequential but adds an if statement that chooses whther to pass only x or x and time_emb depending on each layer's inputs
+class TimestepBlock(nn.Module):
+    """
+    Any module where forward() takes timestep embeddings as a second argument.
+    """
+    @abstractmethod
+    def forward(self, x, time_emb):
+        """
+        Apply the module to `x` given `emb` timestep embeddings.
+        """
+
+class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
+    """
+    A sequential module that passes timestep embeddings to the children that
+    support it as an extra input.
+    """
+    def forward(self, x, time_emb):
+        for module in self:
+            if isinstance(module, TimestepBlock):
+                x = module(x, time_emb)
+            else:
+                x = module(x)
+        return x
+            
+
 
 ## NOTE: Could make this a more general unet ddpm by defining the ResnetBlock wrt a conv dim, and having a helper function which defines the conv1d, conv2d, or conv3d based on the dim
 ## NOTE: Implemented this first
-class ResnetBlock(nn.Module):
+class ResnetBlock(TimestepBlock):
     def __init__(
         self, 
         in_channels, 
